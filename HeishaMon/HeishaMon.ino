@@ -10,11 +10,17 @@
 
 #include <ArduinoJson.h>
 
+#include <SoftwareSerial.h>
+
+#define MYPORT_TX 16
+#define MYPORT_RX 14
+
 #include "webfunctions.h"
 #include "decode.h"
 #include "commands.h"
 
 DNSServer dnsServer;
+SoftwareSerial myPort;
 
 //to read bus voltage in stats
 ADC_MODE(ADC_VCC);
@@ -30,7 +36,7 @@ ADC_MODE(ADC_VCC);
 
 const byte DNS_PORT = 53;
 
-#define SERIALTIMEOUT 2000 // wait until all 203 bytes are read, must not be too long to avoid blocking the code
+#define SERIALTIMEOUT 5000 // wait until all 203 bytes are read, must not be too long to avoid blocking the code
 
 ESP8266WebServer httpServer(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
@@ -48,6 +54,7 @@ unsigned long lastMqttReconnectAttempt = 0;
 unsigned long lastWifiRetryTimer = 0;
 
 unsigned long lastRunTime = 0;
+unsigned long lastRunTime2 = 0;
 
 unsigned long sendCommandReadTime = 0; //set to millis value during send, allow to wait millis for answer
 unsigned long goodreads = 0;
@@ -565,6 +572,8 @@ void switchSerial() {
 
   setupGPIO(heishamonSettings.gpioSettings); //switch extra GPIOs to configured mode
 
+  myPort.begin(9600, SWSERIAL_8E1, MYPORT_RX, MYPORT_TX, false);
+
   //enable gpio15 after boot using gpio5 (D1)
   pinMode(5, OUTPUT);
   digitalWrite(5, HIGH);
@@ -662,6 +671,8 @@ void read_panasonic_data() {
   if ( (heishamonSettings.listenonly || sending) && (Serial.available() > 0)) readSerial();
 }
 
+bool wifiModuleMode = false;
+
 void loop() {
   // check wifi
   check_wifi();
@@ -673,6 +684,33 @@ void loop() {
   webSocket.loop();
 
   mqtt_client.loop();
+
+  if ((!sending) && (!heishamonSettings.listenonly)) {
+    if (myPort.available() > 0) {
+      wifiModuleMode = true;
+    }
+  }
+
+  if (wifiModuleMode) {
+    if (myPort.available() > 0) {
+      Serial.write(myPort.read());
+
+      lastRunTime2 = millis();
+    }
+   
+    if (Serial.available() > 0) {
+      myPort.write(Serial.read());
+    }
+  }
+
+
+  if ((unsigned long)(millis() - lastRunTime2) > 1000) {
+      wifiModuleMode = false;
+  }
+
+  if (wifiModuleMode) {
+    return;
+  }
 
   read_panasonic_data();
 
